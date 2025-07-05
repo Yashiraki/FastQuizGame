@@ -6,7 +6,7 @@
   <title>みんなで早押しクイズ</title>
   <style>
     body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
-    #questionBox, #choicesBox, #answerButton, #hostControls, #timer { display: none; margin-top: 20px; }
+    #questionBox, #choicesBox, #hostControls, #timer, #buzzButton { display: none; margin-top: 20px; }
     button { margin: 5px; padding: 10px 20px; font-size: 16px; }
     .hidden { display: none; }
     #playerList { margin-top: 10px; background: #fff; padding: 10px; border: 1px solid #ccc; max-width: 300px; }
@@ -36,12 +36,16 @@
       <option value="3">正解: 4</option>
     </select>
     <button onclick="submitQuestion()">問題を出す</button>
+    <input type="file" id="fileInput" />
+    <button onclick="loadFromFile()">ファイルから問題を読み込む</button>
+    <button onclick="sendNextQuestion()">次の問題</button>
+    <div id="hostStatus"></div>
   </div>
 
   <div id="gameArea">
     <div id="questionBox"></div>
+    <div><button id="buzzButton" onclick="onBuzz()">早押し！</button></div>
     <div id="timer">制限時間: <span id="countdown">20</span>秒</div>
-    <button id="answerButton" onclick="buzz()">回答する！</button>
     <div id="choicesBox"></div>
     <div id="status"></div>
     <div id="playerList"><h3>参加者ランキング</h3><ul id="players"></ul></div>
@@ -52,11 +56,14 @@
     const socket = io();
     let username = "";
     let isHost = false;
-    let canAnswer = true;
-    let lockout = false;
+    let canAnswer = false;
+    let answered = false;
+    let buzzed = false;
     let currentQuestion = null;
     let countdownTimer = null;
     let timeLeft = 20;
+    let loadedQuestions = [];
+    let currentQuestionIndex = 0;
 
     function joinGame() {
       username = document.getElementById("username").value;
@@ -82,11 +89,38 @@
       socket.emit("new_question", { question: questionText, choices, correct });
     }
 
-    function buzz() {
-      if (canAnswer && currentQuestion) {
-        showChoices(currentQuestion);
-        startCountdown();
+    function loadFromFile() {
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          loadedQuestions = JSON.parse(e.target.result);
+          currentQuestionIndex = 0;
+          document.getElementById("hostStatus").textContent = "問題ファイルを読み込みました。";
+        } catch (e) {
+          alert("問題ファイルの読み込みに失敗しました");
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function sendNextQuestion() {
+      if (currentQuestionIndex >= loadedQuestions.length) {
+        document.getElementById("hostStatus").textContent = "次の問題がありません。";
+        return;
       }
+      const q = loadedQuestions[currentQuestionIndex];
+      socket.emit("new_question", q);
+      currentQuestionIndex++;
+    }
+
+    function onBuzz() {
+      if (buzzed || answered) return;
+      buzzed = true;
+      canAnswer = true;
+      enableChoices();
+      startCountdown();
     }
 
     function startCountdown() {
@@ -99,20 +133,25 @@
         document.getElementById("countdown").textContent = timeLeft;
         if (timeLeft <= 0) {
           clearInterval(countdownTimer);
-          failAnswer("時間切れ！不正解です。");
+          if (!answered) {
+            failAnswer("時間切れ！不正解です。");
+          }
         }
       }, 1000);
     }
 
     function showChoices(q) {
-      document.getElementById("answerButton").style.display = "none";
       const choicesDiv = document.getElementById("choicesBox");
       choicesDiv.innerHTML = "";
       q.choices.forEach((choice, idx) => {
         const btn = document.createElement("button");
         btn.textContent = choice;
+        btn.disabled = true;
         btn.onclick = () => {
+          if (!canAnswer || answered) return;
           clearInterval(countdownTimer);
+          answered = true;
+          canAnswer = false;
           socket.emit("answer", { index: idx });
         };
         choicesDiv.appendChild(btn);
@@ -120,14 +159,23 @@
       choicesDiv.style.display = "block";
     }
 
+    function enableChoices() {
+      const buttons = document.querySelectorAll("#choicesBox button");
+      buttons.forEach(btn => btn.disabled = false);
+    }
+
     socket.on("question", (q) => {
       currentQuestion = q;
+      answered = false;
+      buzzed = false;
+      canAnswer = false;
       document.getElementById("questionBox").textContent = q.question;
       document.getElementById("questionBox").style.display = "block";
-      document.getElementById("answerButton").style.display = "block";
-      document.getElementById("choicesBox").style.display = "none";
       document.getElementById("status").textContent = "";
       document.getElementById("timer").style.display = "none";
+      document.getElementById("buzzButton").style.display = "inline-block";
+      document.getElementById("buzzButton").disabled = false;
+      showChoices(q);
     });
 
     socket.on("players", (players) => {
@@ -143,18 +191,40 @@
 
     socket.on("answer_result", ({ result }) => {
       if (result === "correct") {
-        document.getElementById("status").textContent = "正解！";
+        document.getElementById("status").textContent = "正解！次の問題を待っています...";
+        canAnswer = false;
+        clearInterval(countdownTimer);
       } else {
         document.getElementById("status").textContent = "不正解！30秒待ってね";
         canAnswer = false;
-        lockout = true;
+        answered = true;
         setTimeout(() => {
+          if (!currentQuestion) return;
+          answered = false;
+          buzzed = false;
           canAnswer = true;
-          lockout = false;
           document.getElementById("status").textContent = "再び回答可能です";
+          enableChoices();
+          document.getElementById("buzzButton").disabled = false;
         }, 30000);
       }
     });
+
+    function failAnswer(message) {
+      socket.emit("answer", { index: -1 });
+      document.getElementById("status").textContent = message;
+      canAnswer = false;
+      answered = true;
+      setTimeout(() => {
+        if (!currentQuestion) return;
+        answered = false;
+        buzzed = false;
+        canAnswer = true;
+        document.getElementById("status").textContent = "再び回答可能です";
+        enableChoices();
+        document.getElementById("buzzButton").disabled = false;
+      }, 30000);
+    }
   </script>
 </body>
 </html>
