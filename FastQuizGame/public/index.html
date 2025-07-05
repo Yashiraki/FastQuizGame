@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>みんなで早押しクイズ</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
+    #questionBox, #choicesBox, #answerButton, #hostControls, #timer { display: none; margin-top: 20px; }
+    button { margin: 5px; padding: 10px 20px; font-size: 16px; }
+    .hidden { display: none; }
+    #playerList { margin-top: 10px; background: #fff; padding: 10px; border: 1px solid #ccc; max-width: 300px; }
+    #gameArea, #hostControls { margin-top: 20px; }
+    .score { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>みんなで早押しクイズ</h1>
+  <div id="nameInput">
+    <input type="text" id="username" placeholder="名前を入力" />
+    <button onclick="joinGame()">参加する</button>
+    <label><input type="checkbox" id="isHost" /> 出題者として参加</label>
+  </div>
+
+  <div id="hostControls">
+    <h2>出題者メニュー</h2>
+    <textarea id="newQuestion" placeholder="問題文" rows="2" cols="50"></textarea><br>
+    <input type="text" id="choice0" placeholder="選択肢1" />
+    <input type="text" id="choice1" placeholder="選択肢2" />
+    <input type="text" id="choice2" placeholder="選択肢3" />
+    <input type="text" id="choice3" placeholder="選択肢4" />
+    <select id="correctAnswer">
+      <option value="0">正解: 1</option>
+      <option value="1">正解: 2</option>
+      <option value="2">正解: 3</option>
+      <option value="3">正解: 4</option>
+    </select>
+    <button onclick="submitQuestion()">問題を出す</button>
+  </div>
+
+  <div id="gameArea">
+    <div id="questionBox"></div>
+    <div id="timer">制限時間: <span id="countdown">20</span>秒</div>
+    <button id="answerButton" onclick="buzz()">回答する！</button>
+    <div id="choicesBox"></div>
+    <div id="status"></div>
+    <div id="playerList"><h3>参加者ランキング</h3><ul id="players"></ul></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let username = "";
+    let isHost = false;
+    let canAnswer = true;
+    let lockout = false;
+    let currentQuestion = null;
+    let countdownTimer = null;
+    let timeLeft = 20;
+
+    function joinGame() {
+      username = document.getElementById("username").value;
+      if (!username) return alert("名前を入力してください");
+      isHost = document.getElementById("isHost").checked;
+      socket.emit("join", { name: username, isHost });
+      document.getElementById("nameInput").style.display = "none";
+      document.getElementById("gameArea").style.display = "block";
+      if (isHost) {
+        document.getElementById("hostControls").style.display = "block";
+      }
+    }
+
+    function submitQuestion() {
+      const questionText = document.getElementById("newQuestion").value;
+      const choices = [
+        document.getElementById("choice0").value,
+        document.getElementById("choice1").value,
+        document.getElementById("choice2").value,
+        document.getElementById("choice3").value,
+      ];
+      const correct = parseInt(document.getElementById("correctAnswer").value);
+      socket.emit("new_question", { question: questionText, choices, correct });
+    }
+
+    function buzz() {
+      if (canAnswer && currentQuestion) {
+        showChoices(currentQuestion);
+        startCountdown();
+      }
+    }
+
+    function startCountdown() {
+      clearInterval(countdownTimer);
+      timeLeft = 20;
+      document.getElementById("timer").style.display = "block";
+      document.getElementById("countdown").textContent = timeLeft;
+      countdownTimer = setInterval(() => {
+        timeLeft--;
+        document.getElementById("countdown").textContent = timeLeft;
+        if (timeLeft <= 0) {
+          clearInterval(countdownTimer);
+          failAnswer("時間切れ！不正解です。");
+        }
+      }, 1000);
+    }
+
+    function showChoices(q) {
+      document.getElementById("answerButton").style.display = "none";
+      const choicesDiv = document.getElementById("choicesBox");
+      choicesDiv.innerHTML = "";
+      q.choices.forEach((choice, idx) => {
+        const btn = document.createElement("button");
+        btn.textContent = choice;
+        btn.onclick = () => {
+          clearInterval(countdownTimer);
+          socket.emit("answer", { index: idx });
+        };
+        choicesDiv.appendChild(btn);
+      });
+      choicesDiv.style.display = "block";
+    }
+
+    socket.on("question", (q) => {
+      currentQuestion = q;
+      document.getElementById("questionBox").textContent = q.question;
+      document.getElementById("questionBox").style.display = "block";
+      document.getElementById("answerButton").style.display = "block";
+      document.getElementById("choicesBox").style.display = "none";
+      document.getElementById("status").textContent = "";
+      document.getElementById("timer").style.display = "none";
+    });
+
+    socket.on("players", (players) => {
+      const ul = document.getElementById("players");
+      ul.innerHTML = "";
+      const sorted = Object.entries(players).sort((a, b) => b[1].score - a[1].score);
+      sorted.forEach(([name, data]) => {
+        const li = document.createElement("li");
+        li.textContent = `${name} ：スコア ${data.score}`;
+        ul.appendChild(li);
+      });
+    });
+
+    socket.on("answer_result", ({ result }) => {
+      if (result === "correct") {
+        document.getElementById("status").textContent = "正解！";
+      } else {
+        document.getElementById("status").textContent = "不正解！30秒待ってね";
+        canAnswer = false;
+        lockout = true;
+        setTimeout(() => {
+          canAnswer = true;
+          lockout = false;
+          document.getElementById("status").textContent = "再び回答可能です";
+        }, 30000);
+      }
+    });
+  </script>
+</body>
+</html>
