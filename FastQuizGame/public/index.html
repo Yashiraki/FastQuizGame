@@ -12,6 +12,8 @@
     #playerList { margin-top: 10px; background: #fff; padding: 10px; border: 1px solid #ccc; max-width: 300px; }
     #gameArea, #hostControls { margin-top: 20px; }
     .score { font-weight: bold; }
+    #hostNotification { margin-top: 10px; color: green; font-weight: bold; }
+
   </style>
 </head>
 <body>
@@ -20,10 +22,12 @@
     <input type="text" id="username" placeholder="名前を入力" />
     <button onclick="joinGame()">参加する</button>
     <label><input type="checkbox" id="isHost" /> 出題者として参加</label>
+    <div id="hostRejectMessage" style="color:red;"></div>
   </div>
 
-  <div id="hostControls">
+  <div id="hostControls" style="display: none;">
     <h2>出題者メニュー</h2>
+    <button id="startGameBtn">ゲームを開始する</button><br><br>
     <textarea id="newQuestion" placeholder="問題文" rows="2" cols="50"></textarea><br>
     <input type="text" id="choice0" placeholder="選択肢1" />
     <input type="text" id="choice1" placeholder="選択肢2" />
@@ -40,9 +44,10 @@
     <button onclick="loadFromFile()">ファイルから問題を読み込む</button>
     <button onclick="sendNextQuestion()">次の問題</button>
     <div id="hostStatus"></div>
+    <div id="hostNotification"></div>
   </div>
 
-  <div id="gameArea">
+  <div id="gameArea" style="display: none;">
     <div id="questionBox"></div>
     <div><button id="buzzButton" onclick="onBuzz()">早押し！</button></div>
     <div id="timer">制限時間: <span id="countdown">20</span>秒</div>
@@ -70,15 +75,30 @@
       if (!username) return alert("名前を入力してください");
       isHost = document.getElementById("isHost").checked;
       socket.emit("join", { name: username, isHost });
-      document.getElementById("nameInput").style.display = "none";
-      document.getElementById("gameArea").style.display = "block";
-      if (isHost) {
-        document.getElementById("hostControls").style.display = "block";
-      }
+
+      socket.on("join_success", ({ host }) => {
+        document.getElementById("nameInput").style.display = "none";
+        if (host) {
+          document.getElementById("hostControls").style.display = "block";
+          document.getElementById("startGameBtn").style.display = "inline-block";
+        } else {
+          document.getElementById("gameArea").style.display = "block";
+        }
+      });
+
+      socket.on("host_rejected", () => {
+        document.getElementById("hostRejectMessage").textContent = "すでに出題者が存在します。参加者としてのみ参加できます。";
+        document.getElementById("isHost").checked = false;
+      });
     }
 
+    document.getElementById("startGameBtn").addEventListener("click", () => {
+      document.getElementById("gameArea").style.display = "block";
+      document.getElementById("startGameBtn").style.display = "none";
+    });
+
     function submitQuestion() {
-      const questionText = document.getElementById("newQuestion").value;
+      const question = document.getElementById("newQuestion").value;
       const choices = [
         document.getElementById("choice0").value,
         document.getElementById("choice1").value,
@@ -86,33 +106,34 @@
         document.getElementById("choice3").value,
       ];
       const correct = parseInt(document.getElementById("correctAnswer").value);
-      socket.emit("new_question", { question: questionText, choices, correct });
+      socket.emit("host_question", { question, choices, correct });
     }
 
     function loadFromFile() {
-      const file = document.getElementById("fileInput").files[0];
+      const fileInput = document.getElementById("fileInput");
+      const file = fileInput.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = function (e) {
+      reader.onload = function(e) {
         try {
           loadedQuestions = JSON.parse(e.target.result);
           currentQuestionIndex = 0;
-          document.getElementById("hostStatus").textContent = "問題ファイルを読み込みました。";
-        } catch (e) {
-          alert("問題ファイルの読み込みに失敗しました");
+          document.getElementById("hostStatus").textContent = `問題ファイルを読み込みました（${loadedQuestions.length}問）`;
+        } catch (err) {
+          alert("ファイルの読み込みに失敗しました。");
         }
       };
       reader.readAsText(file);
     }
 
     function sendNextQuestion() {
-      if (currentQuestionIndex >= loadedQuestions.length) {
+      if (currentQuestionIndex < loadedQuestions.length) {
+        const q = loadedQuestions[currentQuestionIndex++];
+        socket.emit("host_question", q);
+      } else {
         document.getElementById("hostStatus").textContent = "次の問題がありません。";
         return;
       }
-      const q = loadedQuestions[currentQuestionIndex];
-      socket.emit("new_question", q);
-      currentQuestionIndex++;
     }
 
     function onBuzz() {
@@ -225,6 +246,11 @@
         document.getElementById("buzzButton").disabled = false;
       }, 30000);
     }
+
+    socket.on("correct_answer_notification", (name) => {
+      const hostNote = document.getElementById("hostNotification");
+      hostNote.textContent = `正解者: ${name}`;
+    });
   </script>
 </body>
 </html>

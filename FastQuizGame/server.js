@@ -20,13 +20,24 @@ io.on("connection", (socket) => {
       socket.emit("join_error", { message: "この名前は既に使われています" });
       return;
     }
+
+    // すでにホストがいる場合は拒否
+    const hostExists = Object.values(players).some(p => p.isHost);
+    if (isHost && hostExists) {
+      socket.emit("host_rejected");
+      isHost = false;
+    }
+
     players[socket.id] = { name, score: 0, isHost };
     nameMap[name] = socket.id;
+
+    socket.emit("join_success", { host: isHost });
     io.emit("players", formatPlayers());
+
     if (currentQuestion) socket.emit("question", currentQuestion);
   });
 
-  socket.on("new_question", (q) => {
+  socket.on("host_question", (q) => {
     currentQuestion = q;
     io.emit("question", q);
   });
@@ -39,6 +50,7 @@ io.on("connection", (socket) => {
     if (result === "correct") {
       player.score += 1;
       io.emit("players", formatPlayers());
+      io.emit("correct_answer_notification", player.name);
     }
     io.to(socket.id).emit("answer_result", { result });
   });
