@@ -1,3 +1,4 @@
+// --- server.js 修正済みコード ---
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -11,6 +12,7 @@ app.use(express.static("public"));
 let players = {}; // socket.id -> { name, score, isHost }
 let nameMap = {}; // name -> socket.id
 let currentQuestion = null;
+let currentResponder = null;
 
 io.on("connection", (socket) => {
   console.log("接続:", socket.id);
@@ -21,7 +23,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // すでにホストがいる場合は拒否
     const hostExists = Object.values(players).some(p => p.isHost);
     if (isHost && hostExists) {
       socket.emit("host_rejected");
@@ -33,18 +34,30 @@ io.on("connection", (socket) => {
 
     socket.emit("join_success", { host: isHost });
     io.emit("players", formatPlayers());
+    updateHostDisplay();
 
     if (currentQuestion) socket.emit("question", currentQuestion);
   });
 
   socket.on("host_question", (q) => {
     currentQuestion = q;
+    currentResponder = null;
     io.emit("question", q);
+  });
+
+  socket.on("buzz", () => {
+    if (currentResponder) return; // すでに誰かが押している
+    const player = players[socket.id];
+    if (!player || player.isHost) return;
+
+    currentResponder = socket.id;
+    io.emit("buzzed", { name: player.name });
   });
 
   socket.on("answer", ({ index }) => {
     const player = players[socket.id];
     if (!player || !currentQuestion) return;
+    if (currentResponder && socket.id !== currentResponder) return;
 
     const result = index === currentQuestion.correct ? "correct" : "wrong";
     if (result === "correct") {
@@ -53,6 +66,11 @@ io.on("connection", (socket) => {
       io.emit("correct_answer_notification", player.name);
     }
     io.to(socket.id).emit("answer_result", { result });
+
+    if (result === "wrong") {
+      currentResponder = null;
+      io.emit("reset_buzz");
+    }
   });
 
   socket.on("disconnect", () => {
@@ -61,13 +79,19 @@ io.on("connection", (socket) => {
     }
     delete players[socket.id];
     io.emit("players", formatPlayers());
+    updateHostDisplay();
   });
+
+  function updateHostDisplay() {
+    const host = Object.values(players).find(p => p.isHost);
+    io.emit("host_name", host ? host.name : null);
+  }
 });
 
 function formatPlayers() {
   const out = {};
   Object.values(players).forEach((p) => {
-    out[p.name] = { score: p.score };
+    if (!p.isHost) out[p.name] = { score: p.score };
   });
   return out;
 }

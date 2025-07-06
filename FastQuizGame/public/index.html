@@ -17,7 +17,11 @@
   </style>
 </head>
 <body>
-  <h1>みんなで早押しクイズ</h1>
+  <h1>
+  みんなで早押しクイズ
+  <span id="hostDisplay" style="font-size: 16px; color: gray;">出題者：出題者がいません</span>
+  </h1>
+
   <div id="nameInput">
     <input type="text" id="username" placeholder="名前を入力" />
     <button onclick="joinGame()">参加する</button>
@@ -251,6 +255,36 @@
       const hostNote = document.getElementById("hostNotification");
       hostNote.textContent = `正解者: ${name}`;
     });
+
+    function onBuzz() {
+      if (buzzed || answered) return;
+      buzzed = true;
+      canAnswer = true;
+      socket.emit("buzz");
+      enableChoices();
+      startCountdown();
+    }
+
+    socket.on("buzzed", ({ name }) => {
+      if (!buzzed) {
+        document.getElementById("status").textContent = `${name} がボタンを押しました！`;
+        document.getElementById("buzzButton").disabled = true;
+      }
+    });
+
+    socket.on("reset_buzz", () => {
+      document.getElementById("status").textContent = "再び早押しできます！";
+      buzzed = false;
+      canAnswer = false;
+      answered = false;
+      document.getElementById("buzzButton").disabled = false;
+    });
+
+    socket.on("host_name", (hostName) => {
+      const display = hostName ? `出題者：${hostName}` : "出題者：出題者がいません";
+      document.getElementById("hostDisplay").textContent = display;
+    });
+
   </script>
 </body>
 </html>
